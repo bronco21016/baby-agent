@@ -121,18 +121,7 @@ This gives each conversation a unique ID so Claude remembers context across turn
 
 ---
 
-### Action 4 — Stop if user says "done" *(inside Repeat)*
-
-1. Search for **"If"**
-2. Configure: **"Provided Input"** → **"contains"** → type `done`
-3. Tap **Add to Shortcut** — you'll see **If / Otherwise / End If** blocks
-
-4. Inside the **If** branch, add **"Stop Shortcut"**
-   - Search for **"Stop This Shortcut"** and add it inside the If block
-
----
-
-### Action 5 — Send the message to the server *(inside Repeat, after End If)*
+### Action 4 — Send the message to the server *(inside Repeat)*
 
 1. Search for **"Get Contents of URL"**
 2. Tap **Add to Shortcut**
@@ -157,9 +146,9 @@ This gives each conversation a unique ID so Claude remembers context across turn
 
 ---
 
-### Action 6 — Extract the reply *(inside Repeat)*
+### Action 5 — Extract the reply *(inside Repeat)*
 
-The server returns JSON like `{"session_id":"...","reply":"Sleep started.","turn_count":1}`.
+The server returns JSON like `{"session_id":"...","reply":"Sleep started.","turn_count":1,"conversation_done":true}`.
 
 1. Search for **"Get Dictionary Value"**
 2. Set **Get** → **Value**
@@ -170,12 +159,37 @@ The server returns JSON like `{"session_id":"...","reply":"Sleep started.","turn
 
 ---
 
+### Action 6 — Extract the done flag *(inside Repeat)*
+
+1. Search for **"Get Dictionary Value"** again
+2. Set **Get** → **Value**
+3. Set **for Key** → type `conversation_done`
+4. Set **from** → tap the variable icon → select **"Contents of URL"** (same response as above)
+5. Tap **Add to Shortcut**
+6. Tap the result → **"Add Variable"** → name it **`conversation_done`**
+
+---
+
 ### Action 7 — Speak the reply *(inside Repeat)*
 
 1. Search for **"Speak Text"**
 2. Tap the text field → tap the variable icon → select **`reply`**
 3. (Optional) Set **Wait Until Finished** → **On** so the next turn doesn't start while Claude is still talking
 4. Tap **Add to Shortcut**
+
+---
+
+### Action 8 — Stop if the conversation is done *(inside Repeat, after Speak Text)*
+
+The server sets `conversation_done` to `true` when it detects a natural end — the user said something like "thanks" or "that's all", or a one-shot action was completed with no follow-up expected.
+
+1. Search for **"If"**
+2. Configure: **`conversation_done`** → **"is"** → type `1`
+
+   > iOS Shortcuts represents a JSON boolean `true` as `1` in dictionary values.
+
+3. Tap **Add to Shortcut** — you'll see **If / Otherwise / End If** blocks
+4. Inside the **If** branch, search for **"Stop This Shortcut"** and add it there
 
 ---
 
@@ -191,10 +205,6 @@ The server returns JSON like `{"session_id":"...","reply":"Sleep started.","turn
     ├─ Ask for Input (Text, "What would you like to know?")
     │    └─ Set Variable: user_input
     │
-    ├─ If [user_input contains "done"]
-    │    └─ Stop This Shortcut
-    │  End If
-    │
     ├─ Get Contents of URL
     │    URL: http://192.168.1.42:8000/message
     │    Method: POST
@@ -205,7 +215,14 @@ The server returns JSON like `{"session_id":"...","reply":"Sleep started.","turn
     ├─ Get Dictionary Value "reply" from [Contents of URL]
     │    └─ Set Variable: reply
     │
-    └─ Speak Text [reply]
+    ├─ Get Dictionary Value "conversation_done" from [Contents of URL]
+    │    └─ Set Variable: conversation_done
+    │
+    ├─ Speak Text [reply]
+    │
+    ├─ If [conversation_done is 1]
+    │    └─ Stop This Shortcut
+    │  End If
    End Repeat
 ```
 
@@ -237,7 +254,7 @@ Once the shortcut is running, just speak naturally. Examples:
 | "She had 3 ounces of breast milk from a bottle" | Calls `log_bottle_feeding` |
 | "Start a feeding on the left side" | Calls `start_feeding` with side=left |
 | "Switch sides" | Calls `switch_feeding_side` |
-| "Done" | Ends the conversation loop |
+| "Thanks, that's all" | Server detects the conversation is done and the shortcut stops |
 
 Claude will ask a clarifying question if your request is ambiguous, then confirm every action taken.
 

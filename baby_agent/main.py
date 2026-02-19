@@ -6,6 +6,7 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
+import anthropic
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -63,6 +64,40 @@ class MessageResponse(BaseModel):
     session_id: str
     reply: str
     turn_count: int
+    conversation_done: bool
+
+
+# ---------------------------------------------------------------------------
+# Conversation-done classifier
+# ---------------------------------------------------------------------------
+
+_classifier_client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+
+_DONE_SYSTEM = (
+    "You decide if a baby-care assistant conversation is finished. "
+    "Reply with exactly one word: YES or NO.\n"
+    "Reply YES if the user's message is a closing statement (thanks, bye, that's all, "
+    "done, got it, perfect, all set, etc.) OR the exchange is clearly a completed "
+    "one-shot action with no follow-up expected.\n"
+    "Reply NO if the conversation is ongoing or the user may want to do more."
+)
+
+
+async def _is_conversation_done(user_message: str, agent_reply: str) -> bool:
+    """Use Claude Haiku to decide whether the conversation should end."""
+    prompt = f"User said: {user_message!r}\nAssistant replied: {agent_reply!r}"
+    try:
+        resp = await _classifier_client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=5,
+            system=_DONE_SYSTEM,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = resp.content[0].text.strip().upper() if resp.content else ""
+        return text.startswith("YES")
+    except Exception:
+        log.exception("conversation_done classifier failed; defaulting to False")
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -108,10 +143,13 @@ async def message(req: MessageRequest):
     session.turn_count += 1
     await store.save(session)
 
+    done = await _is_conversation_done(req.message, reply)
+
     return MessageResponse(
         session_id=req.session_id,
         reply=reply,
         turn_count=session.turn_count,
+        conversation_done=done,
     )
 
 
