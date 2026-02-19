@@ -155,7 +155,6 @@ The server returns JSON like `{"session_id":"...","reply":"Sleep started.","turn
 3. Set **for Key** → type `reply`
 4. Set **from** → tap the variable icon → select the result of **"Get Contents of URL"** (it may say "Contents of URL")
 5. Tap **Add to Shortcut**
-6. Tap the result → **"Add Variable"** → name it **`reply`**
 
 ---
 
@@ -166,14 +165,13 @@ The server returns JSON like `{"session_id":"...","reply":"Sleep started.","turn
 3. Set **for Key** → type `conversation_done`
 4. Set **from** → tap the variable icon → select **"Contents of URL"** (same response as above)
 5. Tap **Add to Shortcut**
-6. Tap the result → **"Add Variable"** → name it **`conversation_done`**
 
 ---
 
 ### Action 7 — Speak the reply *(inside Repeat)*
 
 1. Search for **"Speak Text"**
-2. Tap the text field → tap the variable icon → select **`reply`**
+2. Tap the text field → tap the variable icon → under **"Shortcut Input"** scroll to find the magic variable output of the **"Get Dictionary Value"** action from Action 5 (it will say "Dictionary Value") → select it
 3. (Optional) Set **Wait Until Finished** → **On** so the next turn doesn't start while Claude is still talking
 4. Tap **Add to Shortcut**
 
@@ -184,7 +182,7 @@ The server returns JSON like `{"session_id":"...","reply":"Sleep started.","turn
 The server sets `conversation_done` to `true` when it detects a natural end — the user said something like "thanks" or "that's all", or a one-shot action was completed with no follow-up expected.
 
 1. Search for **"If"**
-2. Configure: **`conversation_done`** → **"is"** → type `1`
+2. Tap the input field → tap the variable icon → select the magic variable output of the **"Get Dictionary Value"** action from Action 6 (it will say "Dictionary Value") → set **"is"** → type `1`
 
    > iOS Shortcuts represents a JSON boolean `true` as `1` in dictionary values.
 
@@ -213,14 +211,12 @@ The server sets `conversation_done` to `true` when it detects a natural end — 
     │      message    → [user_input]
     │
     ├─ Get Dictionary Value "reply" from [Contents of URL]
-    │    └─ Set Variable: reply
     │
     ├─ Get Dictionary Value "conversation_done" from [Contents of URL]
-    │    └─ Set Variable: conversation_done
     │
-    ├─ Speak Text [reply]
+    ├─ Speak Text [Dictionary Value from Action 5]
     │
-    ├─ If [conversation_done is 1]
+    ├─ If [Dictionary Value from Action 6 is 1]
     │    └─ Stop This Shortcut
     │  End If
    End Repeat
