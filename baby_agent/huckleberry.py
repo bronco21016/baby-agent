@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+import time
+import uuid
 from datetime import datetime
 from typing import Any
 
@@ -212,6 +214,76 @@ class HuckleberryManager:
 
     async def cancel_feeding(self, child_uid: str) -> dict[str, Any]:
         return await self._run(self._api.cancel_feeding, child_uid)
+
+    def _sync_log_breastfeeding(
+        self,
+        child_uid: str,
+        left_duration_minutes: float,
+        right_duration_minutes: float,
+        last_side: str | None,
+    ) -> dict[str, Any]:
+        left_sec = left_duration_minutes * 60
+        right_sec = right_duration_minutes * 60
+        total_sec = left_sec + right_sec
+
+        if last_side is None:
+            last_side = "right" if right_sec >= left_sec else "left"
+
+        now = time.time()
+        start_time = now - total_sec
+        interval_id = f"{int(now * 1000)}-{uuid.uuid4().hex[:20]}"
+        offset = self._api._get_timezone_offset_minutes()
+
+        client = self._api._get_firestore_client()
+        feed_ref = client.collection("feed").document(child_uid)
+
+        feed_ref.collection("intervals").document(interval_id).set({
+            "mode": "breast",
+            "start": start_time,
+            "lastSide": last_side,
+            "lastUpdated": now,
+            "leftDuration": left_sec,
+            "rightDuration": right_sec,
+            "offset": offset,
+            "end_offset": offset,
+        })
+
+        feed_ref.set({
+            "prefs": {
+                "lastNursing": {
+                    "mode": "breast",
+                    "start": start_time,
+                    "duration": total_sec,
+                    "leftDuration": left_sec,
+                    "rightDuration": right_sec,
+                    "offset": offset,
+                },
+                "timestamp": {"seconds": now},
+                "local_timestamp": now,
+            }
+        }, merge=True)
+
+        return {
+            "status": "ok",
+            "left_minutes": left_duration_minutes,
+            "right_minutes": right_duration_minutes,
+            "last_side": last_side,
+        }
+
+    async def log_breastfeeding(
+        self,
+        child_uid: str,
+        left_duration_minutes: float = 0.0,
+        right_duration_minutes: float = 0.0,
+        last_side: str | None = None,
+    ) -> dict[str, Any]:
+        return await self._run(
+            self._sync_log_breastfeeding,
+            child_uid,
+            left_duration_minutes=left_duration_minutes,
+            right_duration_minutes=right_duration_minutes,
+            last_side=last_side,
+        )
 
     async def log_bottle_feeding(
         self,

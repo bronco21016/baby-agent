@@ -130,6 +130,38 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "properties": {**_CHILD_UID_PROP},
         },
     },
+    {
+        "name": "log_breastfeeding",
+        "description": (
+            "Log a completed breastfeeding session retrospectively — use this when the parent "
+            "didn't track it live and is reporting it after the fact. "
+            "Examples: 'Henry just nursed for 15 minutes', 'log a 10 min feed on the left', "
+            "'we did 8 minutes left and 5 minutes right'. "
+            "Do NOT use this when starting a live session — use start_feeding for that."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                **_CHILD_UID_PROP,
+                "left_duration_minutes": {
+                    "type": "number",
+                    "description": "Minutes spent on the left breast (can be 0).",
+                },
+                "right_duration_minutes": {
+                    "type": "number",
+                    "description": "Minutes spent on the right breast (can be 0).",
+                },
+                "last_side": {
+                    "type": "string",
+                    "enum": ["left", "right"],
+                    "description": (
+                        "Which side the session ended on. "
+                        "If omitted, defaults to whichever side had more time."
+                    ),
+                },
+            },
+        },
+    },
     # ---- Bottle feeding ----
     {
         "name": "log_bottle_feeding",
@@ -312,6 +344,14 @@ async def dispatch_tool(
 
             case "cancel_feeding":
                 return await manager.cancel_feeding(child_uid)
+
+            case "log_breastfeeding":
+                return await manager.log_breastfeeding(
+                    child_uid,
+                    left_duration_minutes=float(inputs.get("left_duration_minutes") or 0),
+                    right_duration_minutes=float(inputs.get("right_duration_minutes") or 0),
+                    last_side=inputs.get("last_side"),
+                )
 
             case "log_bottle_feeding":
                 return await manager.log_bottle_feeding(
