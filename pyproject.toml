@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "baby-agent"
+version = "0.1.0"
+description = "Claude-powered baby tracking agent for Huckleberry via Siri/iOS Shortcuts"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.40.0",
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.30.0",
+    "huckleberry-api",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.2.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.scripts]
+baby-agent = "baby_agent.main:run"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["baby_agent*"]
