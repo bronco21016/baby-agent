@@ -104,7 +104,7 @@ This gives each conversation a unique ID so Claude remembers context across turn
 ### Action 2 — Start the conversation loop
 
 1. Search for **"Repeat"**
-2. Set the repeat count to **20** (this allows up to 20 back-and-forth turns)
+2. Set the repeat count to **10** (this allows up to 10 back-and-forth turns)
 3. Tap **Add to Shortcut** — you will now see a **Repeat / End Repeat** block. All remaining actions go *inside* this block.
 
 ---
@@ -199,7 +199,7 @@ The server sets `conversation_done` to `true` when it detects a natural end — 
 ├─ Format Date (Current Date, "yyyyMMddHHmmss")
 │    └─ Set Variable: session_id
 │
-└─ Repeat 20 times
+└─ Repeat 10 times
     ├─ Ask for Input (Text, "What would you like to know?")
     │    └─ Set Variable: user_input
     │
