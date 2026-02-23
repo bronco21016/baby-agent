@@ -66,7 +66,7 @@ async def run_turn(
     child_uid = manager.get_primary_child_uid() or "unknown"
     child_name = manager.get_child_name(child_uid)
     current_state = manager.summarize_current_state(child_uid)
-    system_prompt = build_system_prompt(current_state, child_name, child_uid)
+    system_prompt = build_system_prompt(current_state, child_name, child_uid, settings.huckleberry_timezone)
 
     # Append user message to working history
     working_history = list(history)

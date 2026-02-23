@@ -12,6 +12,7 @@ import threading
 import time
 import uuid
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Any
 
 from huckleberry_api import HuckleberryAPI  # type: ignore[import]
@@ -142,7 +143,8 @@ class HuckleberryManager:
             start = sleep.get("startTime") or sleep.get("start")
             if start:
                 try:
-                    dt = datetime.fromisoformat(str(start).replace("Z", "+00:00"))
+                    tz = ZoneInfo(settings.huckleberry_timezone)
+                    dt = datetime.fromisoformat(str(start).replace("Z", "+00:00")).astimezone(tz)
                     time_str = dt.strftime("%-I:%M %p")
                     lines.append(f"Sleep: {status} since {time_str}")
                 except Exception:

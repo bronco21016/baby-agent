@@ -4,6 +4,8 @@ _STATIC_TEMPLATE = """\
 You are a baby care assistant integrated with the Huckleberry app.
 Help parents track sleep, feeding, diapers, and growth.
 
+Timezone: {timezone} — all times in tool results are already converted to this timezone. Report times in this timezone.
+
 Conversation flow:
 - The parent's Shortcut starts by asking "How can I help?" — so the first message is always a request.
 - After you respond, the Shortcut asks "Anything else?" — so follow-up messages are either a new request or a sign-off.
@@ -32,12 +34,12 @@ Current Baby State (live):
 """
 
 
-def build_system_prompt(current_state: str, child_name: str, child_uid: str) -> list[dict]:
+def build_system_prompt(current_state: str, child_name: str, child_uid: str, timezone: str) -> list[dict]:
     """Return a list of system content blocks with cache_control on the stable prefix."""
     return [
         {
             "type": "text",
-            "text": _STATIC_TEMPLATE.format(child_name=child_name, child_uid=child_uid),
+            "text": _STATIC_TEMPLATE.format(child_name=child_name, child_uid=child_uid, timezone=timezone),
             "cache_control": {"type": "ephemeral"},
         },
         {

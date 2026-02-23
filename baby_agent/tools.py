@@ -7,6 +7,24 @@ from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
+
+def _localize_timestamps(data: Any, tz: ZoneInfo) -> Any:
+    """Recursively convert Unix timestamps in history data to local time strings.
+
+    Converts floats/ints that look like Unix epoch seconds or milliseconds.
+    Leaves small numbers (e.g. timezone offset minutes) untouched.
+    """
+    if isinstance(data, dict):
+        return {k: _localize_timestamps(v, tz) for k, v in data.items()}
+    if isinstance(data, list):
+        return [_localize_timestamps(v, tz) for v in data]
+    if isinstance(data, (int, float)):
+        if 1_000_000_000 < data < 2_000_000_000:  # Unix seconds (2001–2033)
+            return datetime.fromtimestamp(data, tz=tz).strftime("%-I:%M %p on %b %-d")
+        if 1_000_000_000_000 < data < 2_000_000_000_000:  # Unix milliseconds
+            return datetime.fromtimestamp(data / 1000, tz=tz).strftime("%-I:%M %p on %b %-d")
+    return data
+
 from .config import settings
 from .huckleberry import HuckleberryManager
 
@@ -400,7 +418,7 @@ async def dispatch_tool(
                 event_types = inputs.get("event_types")
                 if event_types:
                     result = {k: v for k, v in result.items() if k in event_types}
-                return result
+                return _localize_timestamps(result, tz)
 
             case _:
                 return {"error": f"Unknown tool: {name}"}
