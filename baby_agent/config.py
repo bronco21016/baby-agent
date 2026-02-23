@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     claude_model: str = Field("claude-opus-4-6", alias="CLAUDE_MODEL")
     claude_effort: Literal["low", "medium", "high", "max"] = Field("high", alias="CLAUDE_EFFORT")
 
+    # Conversation log
+    conversation_log_path: str = Field("conversations.jsonl", alias="CONVERSATION_LOG_PATH")
+
 
 # Single shared instance
 settings = Settings()

@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from .agent import run_turn
 from .config import settings
+from .conversation_log import append_turn, prune_old_entries, prune_task
 from .huckleberry import manager
 from .session import session_cleanup_task, store
 
@@ -31,13 +32,20 @@ log = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     log.info("Starting up baby-agent…")
     await manager.startup()
+    prune_old_entries()
     cleanup_task = asyncio.create_task(session_cleanup_task())
+    log_prune_task = asyncio.create_task(prune_task())
     log.info("baby-agent ready.")
     yield
     log.info("Shutting down…")
     cleanup_task.cancel()
+    log_prune_task.cancel()
     try:
         await cleanup_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await log_prune_task
     except asyncio.CancelledError:
         pass
     await manager.teardown()
@@ -144,6 +152,14 @@ async def message(req: MessageRequest):
     await store.save(session)
 
     done = await _is_conversation_done(req.message, reply)
+
+    append_turn(
+        session_id=req.session_id,
+        turn=session.turn_count,
+        user=req.message,
+        reply=reply,
+        conversation_done=done,
+    )
 
     return MessageResponse(
         session_id=req.session_id,
