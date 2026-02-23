@@ -86,7 +86,10 @@ _DONE_SYSTEM = (
     "Reply with exactly one word: YES or NO.\n"
     "Reply YES if the user's message is a closing statement (thanks, bye, that's all, "
     "done, got it, perfect, all set, etc.) OR the exchange is clearly a completed "
-    "one-shot action with no follow-up expected.\n"
+    "one-shot action with no follow-up expected. "
+    "Also reply YES if the assistant asked 'Anything else?' and the user declined "
+    "(e.g. no, nope, no thanks, I'm good, I'm all set, that's it, nothing, nah, "
+    "no that's all, that's everything, we're good, I think that's it, etc.).\n"
     "Reply NO if the conversation is ongoing or the user may want to do more."
 )
 
