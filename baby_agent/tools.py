@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import _strptime  # noqa: F401 — pre-import to avoid threading race condition
 import logging
 from datetime import datetime, timedelta
 from typing import Any
