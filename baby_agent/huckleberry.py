@@ -350,6 +350,58 @@ class HuckleberryManager:
             return {}
         return result.model_dump()
 
+    async def _fetch_intervals_raw(
+        self,
+        collection: str,
+        child_uid: str,
+        start_timestamp: int,
+        end_timestamp: int,
+    ) -> list[dict[str, Any]]:
+        """Fetch intervals from any collection as raw dicts, tolerating unknown field values.
+
+        huckleberry_api 0.3.0 uses strict pydantic validation which fails the entire
+        multi-container document if any single entry has an unrecognised value (e.g.
+        bottleType='Mixed' from older app versions). This bypasses that by fetching
+        raw Firestore data and skipping individual malformed entries gracefully.
+        """
+        from google.cloud import firestore  # type: ignore[import]
+
+        events: list[dict[str, Any]] = []
+        client = await self._api._get_firestore_client()
+        intervals_ref = client.collection(collection).document(child_uid).collection("intervals")
+
+        try:
+            # Regular (non-multi) documents
+            regular_docs = (
+                intervals_ref
+                .where(filter=firestore.FieldFilter("start", ">=", start_timestamp))
+                .where(filter=firestore.FieldFilter("start", "<", end_timestamp))
+                .order_by("start")
+                .stream()
+            )
+            async for doc in regular_docs:
+                data = doc.to_dict()
+                if data and not data.get("multi"):
+                    events.append(data)
+
+            # Multi-container documents — iterate entries individually
+            multi_docs = intervals_ref.where(filter=firestore.FieldFilter("multi", "==", True)).stream()
+            async for doc in multi_docs:
+                data = doc.to_dict()
+                if not data:
+                    continue
+                for entry in data.get("data", {}).values():
+                    if not isinstance(entry, dict):
+                        continue
+                    entry_start = entry.get("start")
+                    if entry_start is not None and start_timestamp <= entry_start < end_timestamp:
+                        events.append(entry)
+
+        except Exception:
+            log.exception("Error fetching raw %s intervals for child %s", collection, child_uid)
+
+        return events
+
     async def get_history(
         self,
         child_uid: str,
@@ -361,16 +413,13 @@ class HuckleberryManager:
         types = set(event_types) if event_types else {"sleep", "feed", "diaper"}
 
         if "sleep" in types:
-            intervals = await self._api.list_sleep_intervals(child_uid, start_timestamp, end_timestamp)
-            result["sleep"] = [i.model_dump() for i in intervals]
+            result["sleep"] = await self._fetch_intervals_raw("sleep", child_uid, start_timestamp, end_timestamp)
 
         if "feed" in types:
-            intervals = await self._api.list_feed_intervals(child_uid, start_timestamp, end_timestamp)
-            result["feed"] = [i.model_dump() for i in intervals]
+            result["feed"] = await self._fetch_intervals_raw("feed", child_uid, start_timestamp, end_timestamp)
 
         if "diaper" in types:
-            intervals = await self._api.list_diaper_intervals(child_uid, start_timestamp, end_timestamp)
-            result["diaper"] = [i.model_dump() for i in intervals]
+            result["diaper"] = await self._fetch_intervals_raw("diaper", child_uid, start_timestamp, end_timestamp)
 
         return result
 
