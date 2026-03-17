@@ -38,20 +38,78 @@ log = logging.getLogger(__name__)
 # library's own list_*_intervals methods can parse legacy data gracefully.
 # ---------------------------------------------------------------------------
 def _patch_huckleberry_models() -> None:
+    """Relax strict Pydantic validation in huckleberry_api 0.3.0.
+
+    The library uses ``strict: True`` on all Firebase models.  Legacy
+    Firestore data frequently contains field values that fail strict
+    validation (unknown Literal values like ``bottleType='Mixed'``, minor
+    type mismatches, etc.).  When that happens the library silently catches
+    the ``ValidationError`` and returns an empty list — no data at all.
+
+    Fix: flip every interval / container model to ``strict=False`` and
+    widen Literal fields that are known to carry legacy values.
+    """
     try:
         import huckleberry_api.firebase_types as _ft
         import huckleberry_api.api as _api
         from pydantic import TypeAdapter
+        from pydantic.fields import FieldInfo
 
-        # Widen bottleType to accept any string (e.g. legacy 'Mixed' value)
-        _ft.FirebaseBottleFeedIntervalData.__annotations__["bottleType"] = str
-        _ft.FirebaseBottleFeedIntervalData.model_rebuild(force=True)
+        def _widen_field(model, field_name: str, new_type, default=...):
+            """Replace a model field's annotation (e.g. Literal → str).
 
-        # Rebuild the container and union adapter so they see the updated model
-        _ft.FirebaseFeedMultiContainer.model_rebuild(force=True)
+            Pydantic v2 requires updating __pydantic_fields__, __annotations__,
+            AND calling model_rebuild for the change to take effect.
+            """
+            old = model.__pydantic_fields__.get(field_name)
+            if old is None:
+                return
+            kw = {}
+            if default is not ...:
+                kw["default"] = default
+            elif old.default is not None:
+                kw["default"] = old.default
+            model.__pydantic_fields__[field_name] = FieldInfo(annotation=new_type, **kw)
+            model.__annotations__[field_name] = new_type
+
+        # --- 1. Widen Literal fields known to carry legacy values ---
+        _widen_field(_ft.FirebaseBottleFeedIntervalData, "bottleType", str)
+        _widen_field(_ft.FirebaseBreastFeedIntervalData, "lastSide", str)
+        _widen_field(_ft.FirebaseDiaperData, "mode", str)
+        for field in ("color", "consistency", "howItHappened"):
+            _widen_field(_ft.FirebaseDiaperData, field, str | None, default=None)
+
+        # --- 2. Collect every model that needs patching ---
+        _all_models = [
+            _ft.FirebaseSleepIntervalData,
+            _ft.FirebaseBottleFeedIntervalData,
+            _ft.FirebaseBreastFeedIntervalData,
+            _ft.FirebaseSolidsFeedIntervalData,
+            _ft.FirebaseDiaperData,
+            _ft.FirebaseFeedMultiContainer,
+            _ft.FirebaseSleepMultiContainer,
+        ]
+        if hasattr(_ft, "FirebaseDiaperMultiContainer"):
+            _all_models.append(_ft.FirebaseDiaperMultiContainer)
+        for name in (
+            "FirebaseSleepDetails",
+            "FirebaseSleepCondition",
+            "FirebaseSleepLocations",
+            "FirebaseDiaperQuantity",
+            "SolidsFoodEntry",
+        ):
+            if hasattr(_ft, name):
+                _all_models.append(getattr(_ft, name))
+
+        # --- 3. Disable strict mode and rebuild everything ---
+        for model in _all_models:
+            model.model_config["strict"] = False
+            model.model_rebuild(force=True, _types_namespace={})
+
+        # --- 4. Rebuild the union TypeAdapter so it sees updated models ---
         _api._FEED_INTERVAL_ADAPTER = TypeAdapter(_ft.FirebaseFeedIntervalData)
 
-        log.debug("Applied huckleberry_api compatibility patches.")
+        log.info("Applied huckleberry_api compatibility patches (strict=False, widened Literals).")
     except Exception:
         log.warning("Could not apply huckleberry_api compatibility patches.", exc_info=True)
 
@@ -390,19 +448,38 @@ class HuckleberryManager:
         event_types: list[str] | None = None,
     ) -> dict[str, Any]:
         result: dict[str, Any] = {}
+        errors: list[str] = []
         types = set(event_types) if event_types else {"sleep", "feed", "diaper"}
 
         if "sleep" in types:
-            intervals = await self._api.list_sleep_intervals(child_uid, start_timestamp, end_timestamp)
-            result["sleep"] = [i.model_dump() for i in intervals]
+            try:
+                intervals = await self._api.list_sleep_intervals(child_uid, start_timestamp, end_timestamp)
+                result["sleep"] = [i.model_dump() for i in intervals]
+            except Exception as exc:
+                log.exception("Error fetching sleep intervals")
+                errors.append(f"sleep: {exc}")
+                result["sleep"] = []
 
         if "feed" in types:
-            intervals = await self._api.list_feed_intervals(child_uid, start_timestamp, end_timestamp)
-            result["feed"] = [i.model_dump() for i in intervals]
+            try:
+                intervals = await self._api.list_feed_intervals(child_uid, start_timestamp, end_timestamp)
+                result["feed"] = [i.model_dump() for i in intervals]
+            except Exception as exc:
+                log.exception("Error fetching feed intervals")
+                errors.append(f"feed: {exc}")
+                result["feed"] = []
 
         if "diaper" in types:
-            intervals = await self._api.list_diaper_intervals(child_uid, start_timestamp, end_timestamp)
-            result["diaper"] = [i.model_dump() for i in intervals]
+            try:
+                intervals = await self._api.list_diaper_intervals(child_uid, start_timestamp, end_timestamp)
+                result["diaper"] = [i.model_dump() for i in intervals]
+            except Exception as exc:
+                log.exception("Error fetching diaper intervals")
+                errors.append(f"diaper: {exc}")
+                result["diaper"] = []
+
+        if errors:
+            result["_errors"] = errors
 
         return result
 
