@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import _strptime  # noqa: F401 — pre-import to avoid threading race condition
 import logging
 from datetime import datetime, timedelta
 from typing import Any
@@ -415,10 +414,8 @@ async def dispatch_tool(
                     child_uid,
                     int(start_dt.timestamp()),
                     int(end_dt.timestamp()),
+                    event_types=inputs.get("event_types"),
                 )
-                event_types = inputs.get("event_types")
-                if event_types:
-                    result = {k: v for k, v in result.items() if k in event_types}
                 return _localize_timestamps(result, tz)
 
             case _:

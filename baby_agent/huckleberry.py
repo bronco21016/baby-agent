@@ -15,7 +15,12 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Any
 
+import aiohttp
 from huckleberry_api import HuckleberryAPI  # type: ignore[import]
+from huckleberry_api.firebase_types import (  # type: ignore[import]
+    FirebaseFeedDocumentData,
+    FirebaseSleepDocumentData,
+)
 
 from .config import settings
 
@@ -27,12 +32,12 @@ class HuckleberryManager:
 
     def __init__(self) -> None:
         self._api: HuckleberryAPI | None = None
+        self._session: aiohttp.ClientSession | None = None
         self._authenticated = False
         self._children: list[dict[str, Any]] = []  # [{uid, name, ...}, ...]
         self._state_cache: dict[str, dict[str, Any]] = {}  # child_uid → state
         self._feed_cache: dict[str, dict[str, Any]] = {}   # child_uid → feed
         self._lock = threading.Lock()
-        self._listener_stops: list[Any] = []
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -40,48 +45,57 @@ class HuckleberryManager:
 
     async def startup(self) -> None:
         """Authenticate and register realtime listeners for all children."""
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, self._sync_startup)
-
-    def _sync_startup(self) -> None:
+        self._session = aiohttp.ClientSession()
         self._api = HuckleberryAPI(
             email=settings.huckleberry_email,
             password=settings.huckleberry_password,
             timezone=settings.huckleberry_timezone,
+            websession=self._session,
         )
-        self._api.authenticate()
+        await self._api.authenticate()
         self._authenticated = True
         log.info("Huckleberry authenticated successfully.")
 
-        self._children = self._api.get_children()
+        user = await self._api.get_user()
+        if user is None:
+            log.warning("Could not fetch user document; no children available.")
+            return
+
+        for ref in user.childList:
+            uid = ref.cid
+            name = ref.nickname or uid
+            try:
+                child_doc = await self._api.get_child(uid)
+                if child_doc and child_doc.childsName:
+                    name = child_doc.childsName
+            except Exception:
+                log.warning("Could not fetch child document for %s", uid, exc_info=True)
+            self._children.append({"uid": uid, "name": name})
+            self._state_cache[uid] = {}
+            self._feed_cache[uid] = {}
+
         log.info("Found %d child(ren): %s", len(self._children), [c.get("name") for c in self._children])
 
         for child in self._children:
             uid = child["uid"]
-            self._state_cache[uid] = {}
-            self._feed_cache[uid] = {}
             try:
-                stop = self._api.setup_realtime_listener(uid, self._make_state_callback(uid))
-                self._listener_stops.append(stop)
+                await self._api.setup_sleep_listener(uid, self._make_state_callback(uid))
             except Exception:
-                log.warning("Could not register realtime listener for child %s", uid, exc_info=True)
+                log.warning("Could not register sleep listener for child %s", uid, exc_info=True)
             try:
-                stop = self._api.setup_feed_listener(uid, self._make_feed_callback(uid))
-                self._listener_stops.append(stop)
+                await self._api.setup_feed_listener(uid, self._make_feed_callback(uid))
             except Exception:
                 log.warning("Could not register feed listener for child %s", uid, exc_info=True)
 
     async def teardown(self) -> None:
-        """Stop all Firebase listeners."""
-        for stop_fn in self._listener_stops:
+        """Stop all Firebase listeners and close the HTTP session."""
+        if self._api is not None:
             try:
-                if asyncio.iscoroutinefunction(stop_fn):
-                    await stop_fn()
-                else:
-                    stop_fn()
+                await self._api.stop_all_listeners()
             except Exception:
                 pass
-        self._listener_stops.clear()
+        if self._session is not None:
+            await self._session.close()
         log.info("Huckleberry listeners stopped.")
 
     # ------------------------------------------------------------------
@@ -89,16 +103,16 @@ class HuckleberryManager:
     # ------------------------------------------------------------------
 
     def _make_state_callback(self, uid: str):
-        def callback(data: dict[str, Any]) -> None:
+        def callback(data: FirebaseSleepDocumentData) -> None:
             with self._lock:
-                self._state_cache[uid] = data or {}
+                self._state_cache[uid] = data.model_dump() if data else {}
             log.debug("State cache updated for child %s", uid)
         return callback
 
     def _make_feed_callback(self, uid: str):
-        def callback(data: dict[str, Any]) -> None:
+        def callback(data: FirebaseFeedDocumentData) -> None:
             with self._lock:
-                self._feed_cache[uid] = data or {}
+                self._feed_cache[uid] = data.model_dump() if data else {}
             log.debug("Feed cache updated for child %s", uid)
         return callback
 
@@ -136,15 +150,18 @@ class HuckleberryManager:
 
         lines: list[str] = []
 
-        # Sleep
-        sleep = state.get("sleep") or state.get("currentSleep")
-        if sleep:
-            status = sleep.get("status", "unknown")
-            start = sleep.get("startTime") or sleep.get("start")
-            if start:
+        # Sleep — new structure: state["timer"] contains active/paused/timerStartTime
+        timer = state.get("timer")
+        if timer:
+            active = timer.get("active", False)
+            paused = timer.get("paused", False)
+            status = "paused" if paused else ("active" if active else "unknown")
+            start_ms = timer.get("timerStartTime")
+            if start_ms:
                 try:
                     tz = ZoneInfo(settings.huckleberry_timezone)
-                    dt = datetime.fromisoformat(str(start).replace("Z", "+00:00")).astimezone(tz)
+                    # timerStartTime is milliseconds for sleep
+                    dt = datetime.fromtimestamp(start_ms / 1000, tz=tz)
                     time_str = dt.strftime("%-I:%M %p")
                     lines.append(f"Sleep: {status} since {time_str}")
                 except Exception:
@@ -154,12 +171,14 @@ class HuckleberryManager:
         else:
             lines.append("Sleep: not active")
 
-        # Feeding
-        feeding = feed.get("feeding") or state.get("currentFeeding")
-        if feeding:
-            status = feeding.get("status", "unknown")
-            side = feeding.get("side", "")
-            side_str = f" ({side})" if side else ""
+        # Feeding — new structure: feed["timer"] contains active/paused/activeSide
+        feed_timer = feed.get("timer")
+        if feed_timer:
+            active = feed_timer.get("active", False)
+            paused = feed_timer.get("paused", False)
+            status = "paused" if paused else ("active" if active else "unknown")
+            side = feed_timer.get("activeSide") or feed_timer.get("lastSide", "")
+            side_str = f" ({side})" if side and side != "none" else ""
             lines.append(f"Feeding: {status}{side_str}")
         else:
             lines.append("Feeding: not active")
@@ -167,12 +186,8 @@ class HuckleberryManager:
         return "\n".join(lines)
 
     # ------------------------------------------------------------------
-    # Action methods — async wrappers around sync Huckleberry API
+    # Action methods — async wrappers around the Huckleberry API
     # ------------------------------------------------------------------
-
-    async def _run(self, fn, *args, **kwargs):
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, lambda: fn(*args, **kwargs))
 
     async def get_current_state(self, child_uid: str) -> dict[str, Any]:
         with self._lock:
@@ -182,47 +197,55 @@ class HuckleberryManager:
             }
 
     async def start_sleep(self, child_uid: str) -> dict[str, Any]:
-        return await self._run(self._api.start_sleep, child_uid)
+        await self._api.start_sleep(child_uid)
+        return {"status": "ok"}
 
     async def pause_sleep(self, child_uid: str) -> dict[str, Any]:
-        return await self._run(self._api.pause_sleep, child_uid)
+        await self._api.pause_sleep(child_uid)
+        return {"status": "ok"}
 
     async def resume_sleep(self, child_uid: str) -> dict[str, Any]:
-        return await self._run(self._api.resume_sleep, child_uid)
+        await self._api.resume_sleep(child_uid)
+        return {"status": "ok"}
 
     async def complete_sleep(self, child_uid: str) -> dict[str, Any]:
-        return await self._run(self._api.complete_sleep, child_uid)
+        await self._api.complete_sleep(child_uid)
+        return {"status": "ok"}
 
     async def cancel_sleep(self, child_uid: str) -> dict[str, Any]:
-        return await self._run(self._api.cancel_sleep, child_uid)
+        await self._api.cancel_sleep(child_uid)
+        return {"status": "ok"}
 
     async def start_feeding(self, child_uid: str, side: str | None = None) -> dict[str, Any]:
-        kwargs = {}
-        if side:
-            kwargs["side"] = side
-        return await self._run(self._api.start_feeding, child_uid, **kwargs)
+        await self._api.start_nursing(child_uid, side=side or "left")
+        return {"status": "ok"}
 
     async def pause_feeding(self, child_uid: str) -> dict[str, Any]:
-        return await self._run(self._api.pause_feeding, child_uid)
+        await self._api.pause_nursing(child_uid)
+        return {"status": "ok"}
 
     async def resume_feeding(self, child_uid: str) -> dict[str, Any]:
-        return await self._run(self._api.resume_feeding, child_uid)
+        await self._api.resume_nursing(child_uid)
+        return {"status": "ok"}
 
     async def switch_feeding_side(self, child_uid: str) -> dict[str, Any]:
-        return await self._run(self._api.switch_feeding_side, child_uid)
+        await self._api.switch_nursing_side(child_uid)
+        return {"status": "ok"}
 
     async def complete_feeding(self, child_uid: str) -> dict[str, Any]:
-        return await self._run(self._api.complete_feeding, child_uid)
+        await self._api.complete_nursing(child_uid)
+        return {"status": "ok"}
 
     async def cancel_feeding(self, child_uid: str) -> dict[str, Any]:
-        return await self._run(self._api.cancel_feeding, child_uid)
+        await self._api.cancel_nursing(child_uid)
+        return {"status": "ok"}
 
-    def _sync_log_breastfeeding(
+    async def log_breastfeeding(
         self,
         child_uid: str,
-        left_duration_minutes: float,
-        right_duration_minutes: float,
-        last_side: str | None,
+        left_duration_minutes: float = 0.0,
+        right_duration_minutes: float = 0.0,
+        last_side: str | None = None,
     ) -> dict[str, Any]:
         left_sec = left_duration_minutes * 60
         right_sec = right_duration_minutes * 60
@@ -234,12 +257,12 @@ class HuckleberryManager:
         now = time.time()
         start_time = now - total_sec
         interval_id = f"{int(now * 1000)}-{uuid.uuid4().hex[:20]}"
-        offset = self._api._get_timezone_offset_minutes()
+        offset = await self._api._get_timezone_offset_minutes()
 
-        client = self._api._get_firestore_client()
+        client = await self._api._get_firestore_client()
         feed_ref = client.collection("feed").document(child_uid)
 
-        feed_ref.collection("intervals").document(interval_id).set({
+        await feed_ref.collection("intervals").document(interval_id).set({
             "mode": "breast",
             "start": start_time,
             "lastSide": last_side,
@@ -250,7 +273,7 @@ class HuckleberryManager:
             "end_offset": offset,
         })
 
-        feed_ref.set({
+        await feed_ref.set({
             "prefs": {
                 "lastNursing": {
                     "mode": "breast",
@@ -272,21 +295,6 @@ class HuckleberryManager:
             "last_side": last_side,
         }
 
-    async def log_breastfeeding(
-        self,
-        child_uid: str,
-        left_duration_minutes: float = 0.0,
-        right_duration_minutes: float = 0.0,
-        last_side: str | None = None,
-    ) -> dict[str, Any]:
-        return await self._run(
-            self._sync_log_breastfeeding,
-            child_uid,
-            left_duration_minutes=left_duration_minutes,
-            right_duration_minutes=right_duration_minutes,
-            last_side=last_side,
-        )
-
     async def log_bottle_feeding(
         self,
         child_uid: str,
@@ -294,13 +302,8 @@ class HuckleberryManager:
         bottle_type: str,
         units: str,
     ) -> dict[str, Any]:
-        return await self._run(
-            self._api.log_bottle_feeding,
-            child_uid,
-            amount=amount,
-            bottle_type=bottle_type,
-            units=units,
-        )
+        await self._api.log_bottle(child_uid, amount=amount, bottle_type=bottle_type, units=units)
+        return {"status": "ok"}
 
     async def log_diaper(
         self,
@@ -320,7 +323,8 @@ class HuckleberryManager:
             kwargs["color"] = color
         if consistency:
             kwargs["consistency"] = consistency
-        return await self._run(self._api.log_diaper, child_uid, **kwargs)
+        await self._api.log_diaper(child_uid, **kwargs)
+        return {"status": "ok"}
 
     async def log_growth(
         self,
@@ -337,18 +341,38 @@ class HuckleberryManager:
             kwargs["height"] = height
         if head is not None:
             kwargs["head"] = head
-        return await self._run(self._api.log_growth, child_uid, **kwargs)
+        await self._api.log_growth(child_uid, **kwargs)
+        return {"status": "ok"}
 
     async def get_growth_data(self, child_uid: str) -> dict[str, Any]:
-        return await self._run(self._api.get_growth_data, child_uid)
+        result = await self._api.get_latest_growth(child_uid)
+        if result is None:
+            return {}
+        return result.model_dump()
 
     async def get_history(
         self,
         child_uid: str,
         start_timestamp: int,
         end_timestamp: int,
+        event_types: list[str] | None = None,
     ) -> dict[str, Any]:
-        return await self._run(self._api.get_calendar_events, child_uid, start_timestamp, end_timestamp)
+        result: dict[str, Any] = {}
+        types = set(event_types) if event_types else {"sleep", "feed", "diaper"}
+
+        if "sleep" in types:
+            intervals = await self._api.list_sleep_intervals(child_uid, start_timestamp, end_timestamp)
+            result["sleep"] = [i.model_dump() for i in intervals]
+
+        if "feed" in types:
+            intervals = await self._api.list_feed_intervals(child_uid, start_timestamp, end_timestamp)
+            result["feed"] = [i.model_dump() for i in intervals]
+
+        if "diaper" in types:
+            intervals = await self._api.list_diaper_intervals(child_uid, start_timestamp, end_timestamp)
+            result["diaper"] = [i.model_dump() for i in intervals]
+
+        return result
 
 
 # Module-level singleton (populated in main.py lifespan)
