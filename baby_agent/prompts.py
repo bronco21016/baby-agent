@@ -1,9 +1,13 @@
 """System prompt template injected with live baby state each turn."""
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 _STATIC_TEMPLATE = """\
 You are a baby care assistant integrated with the Huckleberry app.
 Help parents track sleep, feeding, diapers, and growth.
 
+Current date/time: {current_datetime}
 Timezone: {timezone} — all times in tool results are already converted to this timezone. Report times in this timezone.
 
 Conversation flow:
@@ -36,10 +40,17 @@ Current Baby State (live):
 
 def build_system_prompt(current_state: str, child_name: str, child_uid: str, timezone: str) -> list[dict]:
     """Return a list of system content blocks with cache_control on the stable prefix."""
+    tz = ZoneInfo(timezone)
+    now_str = datetime.now(tz).strftime("%A, %B %-d, %Y at %-I:%M %p")
     return [
         {
             "type": "text",
-            "text": _STATIC_TEMPLATE.format(child_name=child_name, child_uid=child_uid, timezone=timezone),
+            "text": _STATIC_TEMPLATE.format(
+                child_name=child_name,
+                child_uid=child_uid,
+                timezone=timezone,
+                current_datetime=now_str,
+            ),
             "cache_control": {"type": "ephemeral"},
         },
         {
