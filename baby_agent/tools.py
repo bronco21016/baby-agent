@@ -194,7 +194,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 },
                 "bottle_type": {
                     "type": "string",
-                    "enum": ["Breast Milk", "Formula", "Mixed"],
+                    "enum": ["Breast Milk", "Formula", "Tube Feeding", "Cow Milk", "Goat Milk", "Soy Milk", "Other"],
                     "description": "Type of liquid in the bottle.",
                 },
                 "units": {
