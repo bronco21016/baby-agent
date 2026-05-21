@@ -16,6 +16,7 @@ from .config import settings
 from .conversation_log import append_turn, prune_old_entries, prune_task
 from .huckleberry import manager
 from .session import session_cleanup_task, store
+from .viewer import router as viewer_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -57,6 +58,7 @@ async def lifespan(app: FastAPI):
 # ---------------------------------------------------------------------------
 
 app = FastAPI(title="baby-agent", version="0.1.0", lifespan=lifespan)
+app.include_router(viewer_router)
 
 
 # ---------------------------------------------------------------------------

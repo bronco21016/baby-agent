@@ -1,14 +1,16 @@
-"""Conversation log viewer — spins up a local HTTP server and opens the browser."""
+"""Conversation log viewer mounted at /conversations on the main FastAPI app."""
 
 from __future__ import annotations
 
-import argparse
 import json
-import webbrowser
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
+from fastapi import APIRouter
+from fastapi.responses import HTMLResponse, JSONResponse
+
 from .config import settings
+
+router = APIRouter(prefix="/conversations", tags=["viewer"])
 
 _HTML = r"""<!DOCTYPE html>
 <html lang="en">
@@ -67,28 +69,40 @@ body { font-family: system-ui, sans-serif; display: flex; height: 100vh; backgro
 
 .tool-block { align-self: stretch; }
 details {
-  background: #fafafa; border: 1px solid #e5e5e5; border-radius: 8px;
+  background: #1e1e2e; border: 1px solid #313244; border-radius: 8px;
   overflow: hidden; font-size: 12px;
 }
 summary {
-  padding: 8px 12px; cursor: pointer; color: #6c7086; user-select: none;
+  padding: 8px 12px; cursor: pointer; color: #89b4fa; user-select: none;
   list-style: none; display: flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
 }
 summary::-webkit-details-marker { display: none; }
 summary::before { content: "▶"; font-size: 9px; transition: transform 0.15s; }
 details[open] summary::before { transform: rotate(90deg); }
-.tool-call { padding: 10px 12px; border-top: 1px solid #e5e5e5; }
-.tool-name { font-weight: 600; color: #1a1a1a; margin-bottom: 4px; font-family: monospace; }
+.tool-call { padding: 12px; border-top: 1px solid #313244; }
+.tool-call + .tool-call { border-top: 1px solid #313244; }
+.tool-name { font-weight: 700; color: #cba6f7; margin-bottom: 8px; font-family: monospace; font-size: 13px; }
 .tool-label {
-  font-size: 10px; color: #9ca3af; text-transform: uppercase;
-  letter-spacing: .05em; margin: 8px 0 2px;
+  font-size: 10px; color: #6c7086; text-transform: uppercase;
+  letter-spacing: .06em; margin: 10px 0 4px;
 }
 .tool-label:first-of-type { margin-top: 0; }
 .tool-json {
-  background: #f0f0f0; border-radius: 4px; padding: 6px 8px;
-  font-family: monospace; font-size: 11px; white-space: pre-wrap;
-  word-break: break-all; color: #374151; max-height: 200px; overflow-y: auto;
+  background: #181825; border-radius: 6px; padding: 8px 10px;
+  font-family: 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+  font-size: 11.5px; line-height: 1.6; white-space: pre-wrap;
+  word-break: break-all; max-height: 240px; overflow-y: auto;
+  border: 1px solid #313244;
 }
+
+/* JSON syntax colours (Catppuccin-ish) */
+.j-key   { color: #89b4fa; }   /* blue  — keys */
+.j-str   { color: #a6e3a1; }   /* green — string values */
+.j-num   { color: #fab387; }   /* peach — numbers */
+.j-bool  { color: #f38ba8; }   /* red   — true/false */
+.j-null  { color: #6c7086; }   /* grey  — null */
+.j-punc  { color: #9399b2; }   /* overlay — brackets/braces/commas */
 </style>
 </head>
 <body>
@@ -114,13 +128,30 @@ function fmtDateOnly(ts) {
   });
 }
 function esc(s) {
-  return String(s)
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
-    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
-function prettyJson(val) {
-  if (typeof val === 'object' && val !== null) return JSON.stringify(val, null, 2);
-  try { return JSON.stringify(JSON.parse(val), null, 2); } catch { return String(val); }
+
+function highlight(val) {
+  let str;
+  if (typeof val === 'object' && val !== null) {
+    str = JSON.stringify(val, null, 2);
+  } else {
+    try { str = JSON.stringify(JSON.parse(String(val)), null, 2); }
+    catch { str = String(val); }
+  }
+  // Tokenise and wrap in spans; process char-by-char via regex
+  return str.replace(
+    /("(?:\\.|[^"\\])*")\s*:|("(?:\\.|[^"\\])*")|(true|false)|(null)|(-?\d+(?:\.\d+)?(?:[eE][+\-]?\d+)?)|([{}\[\],:])/g,
+    (_, key, strVal, bool, nil, num, punc) => {
+      if (key)    return `<span class="j-key">${esc(key)}</span>:`;
+      if (strVal) return `<span class="j-str">${esc(strVal)}</span>`;
+      if (bool)   return `<span class="j-bool">${bool}</span>`;
+      if (nil)    return `<span class="j-null">null</span>`;
+      if (num)    return `<span class="j-num">${num}</span>`;
+      if (punc)   return `<span class="j-punc">${esc(punc)}</span>`;
+      return _;
+    }
+  );
 }
 
 function renderSidebar() {
@@ -156,9 +187,9 @@ function renderTurn(t) {
       <div class="tool-call">
         <div class="tool-name">${esc(tc.name)}</div>
         <div class="tool-label">Input</div>
-        <div class="tool-json">${esc(prettyJson(tc.input))}</div>
+        <div class="tool-json">${highlight(tc.input)}</div>
         <div class="tool-label">Result</div>
-        <div class="tool-json">${esc(prettyJson(tc.result))}</div>
+        <div class="tool-json">${highlight(tc.result)}</div>
       </div>`).join('');
     toolHtml = `<div class="tool-block">
       <details>
@@ -175,7 +206,7 @@ function renderTurn(t) {
   </div>`;
 }
 
-fetch('/data')
+fetch('/conversations/data')
   .then(r => r.json())
   .then(data => {
     sessions = data;
@@ -183,15 +214,15 @@ fetch('/data')
     if (sessions.length) selectSession(0);
   })
   .catch(() => {
-    document.getElementById('chat').innerHTML =
-      '<div id="empty">Failed to load data.</div>';
+    document.getElementById('chat').innerHTML = '<div id="empty">Failed to load data.</div>';
   });
 </script>
 </body>
 </html>"""
 
 
-def _load_sessions(path: Path) -> list[dict]:
+def _load_sessions() -> list[dict]:
+    path = Path(settings.conversation_log_path)
     if not path.exists():
         return []
 
@@ -223,48 +254,11 @@ def _load_sessions(path: Path) -> list[dict]:
     return sessions
 
 
-class _Handler(BaseHTTPRequestHandler):
-    log_path: Path  # set at class level before serving
-
-    def do_GET(self) -> None:
-        if self.path == "/":
-            body = _HTML.encode()
-            self._respond(200, "text/html; charset=utf-8", body)
-        elif self.path == "/data":
-            sessions = _load_sessions(self.log_path)
-            body = json.dumps(sessions, default=str).encode()
-            self._respond(200, "application/json", body)
-        else:
-            self.send_error(404)
-
-    def _respond(self, code: int, content_type: str, body: bytes) -> None:
-        self.send_response(code)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, fmt: str, *args: object) -> None:
-        pass  # silence per-request stdout noise
+@router.get("", response_class=HTMLResponse)
+async def viewer_page() -> str:
+    return _HTML
 
 
-def run() -> None:
-    parser = argparse.ArgumentParser(description="Browse baby-agent conversation logs.")
-    parser.add_argument("--port", type=int, default=8765, help="Port (default: 8765)")
-    parser.add_argument(
-        "--log",
-        default=settings.conversation_log_path,
-        help="Path to conversations.jsonl",
-    )
-    args = parser.parse_args()
-
-    _Handler.log_path = Path(args.log)
-    import socket
-    local_ip = socket.gethostbyname(socket.gethostname())
-    url = f"http://{local_ip}:{args.port}"
-    print(f"Serving {args.log} → {url}  (Ctrl+C to stop)")
-    server = HTTPServer(("0.0.0.0", args.port), _Handler)
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nStopped.")
+@router.get("/data")
+async def viewer_data() -> JSONResponse:
+    return JSONResponse(_load_sessions())
