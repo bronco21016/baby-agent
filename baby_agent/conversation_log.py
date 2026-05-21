@@ -1,4 +1,4 @@
-"""JSONL conversation logger with automatic pruning of entries older than 7 days."""
+"""JSONL conversation logger with automatic pruning of entries older than 60 days."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from .config import settings
 
 log = logging.getLogger(__name__)
 
-_RETENTION_DAYS = 7
+_RETENTION_DAYS = 60
 
 
 def _log_path() -> Path:
@@ -26,6 +26,7 @@ def append_turn(
     user: str,
     reply: str,
     conversation_done: bool,
+    tool_calls: list[dict] | None = None,
 ) -> None:
     """Append one turn as a JSON line to the conversation log."""
     record = {
@@ -33,6 +34,7 @@ def append_turn(
         "session_id": session_id,
         "turn": turn,
         "user": user,
+        "tool_calls": tool_calls or [],
         "reply": reply,
         "conversation_done": conversation_done,
     }

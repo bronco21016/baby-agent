@@ -51,8 +51,8 @@ async def run_turn(
     user_message: str,
     history: list[dict[str, Any]],
     manager: HuckleberryManager,
-) -> tuple[str, list[dict[str, Any]]]:
-    """Run one conversational turn and return (reply_text, updated_history).
+) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
+    """Run one conversational turn and return (reply_text, updated_history, tool_calls).
 
     Args:
         user_message: The raw text from the user/Siri.
@@ -60,7 +60,8 @@ async def run_turn(
         manager: The HuckleberryManager singleton for tool execution.
 
     Returns:
-        (reply_text, updated_history)
+        (reply_text, updated_history, tool_calls) where tool_calls is a list of
+        {name, input, result} dicts for every tool invoked during this turn.
     """
     # Resolve primary child for system prompt context
     child_uid = manager.get_primary_child_uid() or "unknown"
@@ -73,6 +74,7 @@ async def run_turn(
     working_history.append({"role": "user", "content": user_message})
 
     reply_text = ""
+    tool_calls: list[dict[str, Any]] = []
 
     for iteration in range(MAX_ITERATIONS):
         log.debug("Agent iteration %d/%d", iteration + 1, MAX_ITERATIONS)
@@ -119,7 +121,9 @@ async def run_turn(
                     tool_id = block["id"]
                     inputs = block.get("input", {})
                 result = await dispatch_tool(name, inputs, manager)
-                return {"type": "tool_result", "tool_use_id": tool_id, "content": str(result)}
+                result_str = str(result)
+                tool_calls.append({"name": name, "input": inputs, "result": result_str})
+                return {"type": "tool_result", "tool_use_id": tool_id, "content": result_str}
 
             tool_results = await asyncio.gather(*[_execute(b) for b in tool_use_blocks])
 
@@ -134,4 +138,4 @@ async def run_turn(
         log.warning("Reached max iterations (%d) without end_turn.", MAX_ITERATIONS)
         reply_text = "I'm having trouble processing that right now. Please try again."
 
-    return reply_text, working_history
+    return reply_text, working_history, tool_calls

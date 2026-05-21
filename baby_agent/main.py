@@ -141,7 +141,7 @@ async def message(req: MessageRequest):
     session = await store.get_or_create(req.session_id)
 
     try:
-        reply, updated_history = await run_turn(
+        reply, updated_history, tool_calls = await run_turn(
             user_message=req.message,
             history=session.history,
             manager=manager,
@@ -162,6 +162,7 @@ async def message(req: MessageRequest):
         user=req.message,
         reply=reply,
         conversation_done=done,
+        tool_calls=tool_calls,
     )
 
     return MessageResponse(
