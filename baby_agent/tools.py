@@ -328,7 +328,9 @@ async def dispatch_tool(
     try:
         match name:
             case "get_current_state":
-                return await manager.get_current_state(child_uid)
+                tz = ZoneInfo(settings.huckleberry_timezone)
+                result = await manager.get_current_state(child_uid)
+                return _localize_timestamps(result, tz)
 
             case "start_sleep":
                 return await manager.start_sleep(child_uid)
