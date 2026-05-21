@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from typing import Any
 
@@ -121,8 +122,11 @@ async def run_turn(
                     tool_id = block["id"]
                     inputs = block.get("input", {})
                 result = await dispatch_tool(name, inputs, manager)
-                result_str = str(result)
-                tool_calls.append({"name": name, "input": inputs, "result": result_str})
+                try:
+                    result_str = json.dumps(result)
+                except (TypeError, ValueError):
+                    result_str = str(result)
+                tool_calls.append({"name": name, "input": inputs, "result": result})
                 return {"type": "tool_result", "tool_use_id": tool_id, "content": result_str}
 
             tool_results = await asyncio.gather(*[_execute(b) for b in tool_use_blocks])

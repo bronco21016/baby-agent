@@ -132,14 +132,19 @@ function esc(s) {
 }
 
 function highlight(val) {
-  let str;
+  // Normalise to a parsed object if possible, then pretty-print as real JSON
+  let obj;
   if (typeof val === 'object' && val !== null) {
-    str = JSON.stringify(val, null, 2);
+    obj = val;
   } else {
-    try { str = JSON.stringify(JSON.parse(String(val)), null, 2); }
-    catch { str = String(val); }
+    try { obj = JSON.parse(String(val)); } catch { obj = null; }
   }
-  // Tokenise and wrap in spans; process char-by-char via regex
+
+  const str = obj !== null ? JSON.stringify(obj, null, 2) : String(val);
+
+  // If we couldn't get valid JSON just show plain escaped text
+  if (obj === null) return `<span style="color:#cdd6f4">${esc(str)}</span>`;
+
   return str.replace(
     /("(?:\\.|[^"\\])*")\s*:|("(?:\\.|[^"\\])*")|(true|false)|(null)|(-?\d+(?:\.\d+)?(?:[eE][+\-]?\d+)?)|([{}\[\],:])/g,
     (_, key, strVal, bool, nil, num, punc) => {
