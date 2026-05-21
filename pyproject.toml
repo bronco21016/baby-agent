@@ -19,6 +19,7 @@ dependencies = [
 
 [project.scripts]
 baby-agent = "baby_agent.main:run"
+baby-agent-view = "baby_agent.viewer:run"
 
 [tool.setuptools.packages.find]
 where = ["."]
