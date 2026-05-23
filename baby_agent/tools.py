@@ -9,10 +9,13 @@ from zoneinfo import ZoneInfo
 
 
 def _localize_timestamps(data: Any, tz: ZoneInfo) -> Any:
-    """Recursively convert Unix timestamps in history data to local time strings.
+    """Recursively convert Unix timestamps to local time strings.
 
-    Converts floats/ints that look like Unix epoch seconds or milliseconds.
-    Leaves small numbers (e.g. timezone offset minutes) untouched.
+    Handles int/float Unix epoch values (seconds or milliseconds).
+    Does NOT handle datetime objects — those must be converted before calling this.
+    All tool results must pass through this (or be otherwise sanitized) before
+    being returned, or json.dumps in conversation_log.py will silently drop the
+    entire log entry.
     """
     if isinstance(data, dict):
         return {k: _localize_timestamps(v, tz) for k, v in data.items()}

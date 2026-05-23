@@ -280,11 +280,49 @@ class HuckleberryManager:
     # ------------------------------------------------------------------
 
     async def get_current_state(self, child_uid: str) -> dict[str, Any]:
-        with self._lock:
-            return {
-                "state": dict(self._state_cache.get(child_uid, {})),
-                "feed": dict(self._feed_cache.get(child_uid, {})),
-            }
+        """Fetch current state directly from Firestore so the result is always fresh.
+
+        The realtime listener cache can go stale if the listener disconnects or if
+        model validation silently fails in its background thread.  A direct read is
+        authoritative and also refreshes the cache so summarize_current_state stays
+        accurate for the remainder of the turn.
+        """
+        try:
+            client = await self._api._get_firestore_client()
+            sleep_doc = await client.collection("sleep").document(child_uid).get()
+            feed_doc = await client.collection("feed").document(child_uid).get()
+
+            state: dict[str, Any] = {}
+            if sleep_doc.exists:
+                raw = sleep_doc.to_dict() or {}
+                try:
+                    state = FirebaseSleepDocumentData.model_validate(raw).model_dump()
+                except Exception:
+                    log.warning("Could not validate sleep document for %s; using raw dict", child_uid, exc_info=True)
+                    state = raw
+
+            feed: dict[str, Any] = {}
+            if feed_doc.exists:
+                raw = feed_doc.to_dict() or {}
+                try:
+                    feed = FirebaseFeedDocumentData.model_validate(raw).model_dump()
+                except Exception:
+                    log.warning("Could not validate feed document for %s; using raw dict", child_uid, exc_info=True)
+                    feed = raw
+
+            with self._lock:
+                self._state_cache[child_uid] = state
+                self._feed_cache[child_uid] = feed
+
+            return {"state": state, "feed": feed}
+
+        except Exception:
+            log.warning("Live Firestore fetch failed for %s; falling back to cache", child_uid, exc_info=True)
+            with self._lock:
+                return {
+                    "state": dict(self._state_cache.get(child_uid, {})),
+                    "feed": dict(self._feed_cache.get(child_uid, {})),
+                }
 
     async def start_sleep(self, child_uid: str) -> dict[str, Any]:
         await self._api.start_sleep(child_uid)

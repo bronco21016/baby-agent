@@ -344,3 +344,56 @@ sudo journalctl -u baby-agent -f
 - Confirm the "Speak Text" action has the `reply` variable selected, not literal text
 - Make sure "Wait Until Finished" is **On** on the Speak Text action
 - Try running the shortcut manually (tap it in the Shortcuts app) to isolate Siri-specific issues
+
+---
+
+## 8. Developer Notes
+
+### Conversation logging
+
+Every `/message` request appends a JSON line to `conversations.jsonl` (path set by `CONVERSATION_LOG_PATH` in `.env`). The record format:
+
+```json
+{
+  "ts": "<UTC ISO timestamp>",
+  "session_id": "...",
+  "turn": 1,
+  "user": "parent's message",
+  "tool_calls": [{"name": "...", "input": {...}, "result": {...}}],
+  "reply": "agent's spoken reply",
+  "conversation_done": true
+}
+```
+
+A browser-based viewer is mounted at `GET /conversations` (data at `GET /conversations/data`).
+
+**When `tool_calls` appears empty in the log:** the agent answered entirely from the static system prompt context (current date/time, child name, rules) without needing any live data. This is normal for simple history or action queries where no lookup is required. Any query that needs current sleep/feed state will call `get_current_state`, which always appears in the log.
+
+### Tool result JSON serializability — critical invariant
+
+`conversation_log.py` serializes the entire turn record with `json.dumps`. If any tool result contains a non-JSON-serializable value (a `datetime` object, a Pydantic model instance, a Firestore `DatetimeWithNanoseconds`, etc.), **the entire log entry silently fails to write** — the exception is caught and logged at ERROR level, but the turn disappears from the viewer.
+
+Rules for tool results returned from `dispatch_tool` in `tools.py`:
+- Use only primitives: `str`, `int`, `float`, `bool`, `None`, `dict`, `list`
+- Call `_localize_timestamps(result, tz)` on any result that may contain Unix timestamps — it converts numeric epoch values to human-readable strings and recurses through dicts and lists
+- `_localize_timestamps` does **not** handle `datetime` objects — if `model_dump()` produces a datetime field, convert it explicitly before returning
+- Avoid returning raw `doc.to_dict()` from Firestore — Firestore `Timestamp` fields come back as `DatetimeWithNanoseconds`, which is not JSON serializable
+
+**Quick check when adding or updating a tool:** after implementing, send a test message that exercises the tool and verify the entry appears in `/conversations` with a non-empty `tool_calls` array.
+
+### Current state: always use the tool
+
+Current state (active sleep/feed timers) is **not** injected into the system prompt. The agent calls `get_current_state` when it needs live data. This ensures:
+- Every current-state query hits Firestore directly and is always fresh
+- The data used is visible in `tool_calls` in the log
+- History queries don't waste tokens loading state they don't need
+
+`get_current_state` in `huckleberry.py` does a live Firestore read every call. The listener caches (`_state_cache`, `_feed_cache`) are still maintained in the background but are only used as a fallback if the Firestore read fails.
+
+### Service management
+
+```bash
+sudo systemctl restart baby-agent   # restart
+sudo systemctl status baby-agent    # check status
+journalctl -u baby-agent -f         # live logs
+```

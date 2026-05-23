@@ -35,14 +35,8 @@ Child: {child_name} (uid: {child_uid})
 Note: Henry may also be referred to as "Hank" — treat both names as the same child.\
 """
 
-_DYNAMIC_TEMPLATE = """\
-Current Baby State (live):
-{current_state}\
-"""
-
-
-def build_system_prompt(current_state: str, child_name: str, child_uid: str, timezone: str) -> list[dict]:
-    """Return a list of system content blocks with cache_control on the stable prefix."""
+def build_system_prompt(child_name: str, child_uid: str, timezone: str) -> list[dict]:
+    """Return the system prompt as a single cacheable content block."""
     tz = ZoneInfo(timezone)
     now_str = datetime.now(tz).strftime("%A, %B %-d, %Y at %-I:%M %p")
     return [
@@ -55,9 +49,5 @@ def build_system_prompt(current_state: str, child_name: str, child_uid: str, tim
                 current_datetime=now_str,
             ),
             "cache_control": {"type": "ephemeral"},
-        },
-        {
-            "type": "text",
-            "text": _DYNAMIC_TEMPLATE.format(current_state=current_state),
         },
     ]
