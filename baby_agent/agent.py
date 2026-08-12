@@ -22,13 +22,9 @@ MODEL = settings.claude_model
 MAX_ITERATIONS = 10
 
 
-def _thinking_params(model: str) -> dict | None:
-    """Return the appropriate thinking parameter for the given model, or None."""
-    if "haiku" in model:
-        return None
-    if model == "claude-opus-4-6":
-        return {"type": "adaptive"}
-    return {"type": "enabled", "budget_tokens": 10000}
+def _supports_thinking(model: str) -> bool:
+    """Haiku has no adaptive thinking or effort parameter; everything else does."""
+    return "haiku" not in model
 
 
 def _serialize_content_blocks(blocks: list[Any]) -> list[dict[str, Any]]:
@@ -78,11 +74,15 @@ async def run_turn(
     for iteration in range(MAX_ITERATIONS):
         log.debug("Agent iteration %d/%d", iteration + 1, MAX_ITERATIONS)
 
-        thinking = _thinking_params(MODEL)
+        thinking_kwargs: dict[str, Any] = {}
+        if _supports_thinking(MODEL):
+            thinking_kwargs["thinking"] = {"type": "adaptive"}
+            thinking_kwargs["output_config"] = {"effort": settings.claude_effort}
+
         response = await _client.messages.create(
             model=MODEL,
             max_tokens=16000,
-            **({"thinking": thinking} if thinking else {}),
+            **thinking_kwargs,
             system=system_prompt,
             tools=TOOL_DEFINITIONS,
             messages=working_history,

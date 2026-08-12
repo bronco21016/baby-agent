@@ -101,7 +101,7 @@ async def _is_conversation_done(user_message: str, agent_reply: str) -> bool:
     prompt = f"User said: {user_message!r}\nAssistant replied: {agent_reply!r}"
     try:
         resp = await _classifier_client.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model=settings.claude_classifier_model,
             max_tokens=5,
             system=_DONE_SYSTEM,
             messages=[{"role": "user", "content": prompt}],

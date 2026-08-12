@@ -24,8 +24,9 @@ class Settings(BaseSettings):
     port: int = Field(8000, alias="PORT")
 
     # Claude
-    claude_model: str = Field("claude-opus-4-6", alias="CLAUDE_MODEL")
-    claude_effort: Literal["low", "medium", "high", "max"] = Field("high", alias="CLAUDE_EFFORT")
+    claude_model: str = Field("claude-sonnet-5", alias="CLAUDE_MODEL")
+    claude_classifier_model: str = Field("claude-haiku-4-5", alias="CLAUDE_CLASSIFIER_MODEL")
+    claude_effort: Literal["low", "medium", "high", "xhigh", "max"] = Field("high", alias="CLAUDE_EFFORT")
 
     # Conversation log
     conversation_log_path: str = Field("conversations.jsonl", alias="CONVERSATION_LOG_PATH")
