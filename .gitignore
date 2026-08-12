@@ -1,6 +1,9 @@
 # Environment / secrets
 .env
 
+# Conversation logs — contain personal data (see CONVERSATION_LOG_PATH)
+*.jsonl
+
 # Python
 __pycache__/
 *.py[cod]
